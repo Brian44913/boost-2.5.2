@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ipfs/go-cid"
 	inet "github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/urfave/cli/v2"
 
 	"github.com/filecoin-project/go-address"
@@ -93,6 +94,10 @@ var dealFlags = []cli.Flag{
 		Usage: "indicates that deal index should not be announced to the IPNI(Network Indexer)",
 		Value: false,
 	},
+	&cli.StringFlag{
+		Name:  "libp2p",
+		Usage: "override the storage provider's full libp2p multiaddr including peer ID (e.g. /ip4/10.0.0.1/tcp/4949/p2p/12D3KooW...)",
+	},
 }
 
 var dealCmd = &cli.Command{
@@ -159,6 +164,15 @@ func dealCmdAction(cctx *cli.Context, isOnline bool) error {
 	addrInfo, err := cmd.GetAddrInfo(ctx, api, maddr)
 	if err != nil {
 		return err
+	}
+
+	// Override provider addr info if --libp2p is specified
+	if cctx.IsSet("libp2p") {
+		newInfo, err := peer.AddrInfoFromString(cctx.String("libp2p"))
+		if err != nil {
+			return fmt.Errorf("failed to parse --libp2p multiaddr: %w", err)
+		}
+		addrInfo = newInfo
 	}
 
 	log.Debugw("found storage provider", "id", addrInfo.ID, "multiaddrs", addrInfo.Addrs, "addr", maddr)
