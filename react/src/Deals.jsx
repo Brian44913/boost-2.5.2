@@ -104,6 +104,7 @@ function StorageDealsContent(props) {
 
     if (error) return <div>Error: {error.message + " - check connection to Boost server"}</div>
     if (loading) return <div>Loading...</div>
+    if (!data || !data.deals) return <div>Error: failed to load deals data - response may be too large</div>
 
     var res = data.deals
     var deals = res.deals

@@ -17,7 +17,11 @@ if (import.meta.env.DEV) {
 const transformResponseLink = new ApolloLink((operation, forward) => {
     const res = forward(operation)
     return Observable.from(res).map(data => {
-        transformResponse(data)
+        try {
+            transformResponse(data)
+        } catch (e) {
+            console.warn('transformResponse failed:', e)
+        }
         return data
     });
 });

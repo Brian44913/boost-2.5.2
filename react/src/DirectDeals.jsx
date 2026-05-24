@@ -98,6 +98,7 @@ function DirectDealsContent() {
 
     if (error) return <div>Error: {error.message + " - check connection to Boost server"}</div>
     if (loading) return <div>Loading...</div>
+    if (!data || !data.directDeals) return <div>Error: failed to load deals data - response may be too large</div>
 
     var res = data.directDeals
     var deals = res.deals

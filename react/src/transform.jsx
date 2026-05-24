@@ -1,26 +1,39 @@
 /* global BigInt */
 
 var dateRegExp = /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/
-export function transformResponse(obj, parent, parentKey) {
-    for (let key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            if (typeof obj === 'string') {
-                // If the string is a date, convert it to a date object
-                if (obj.match(dateRegExp)) {
-                    const asDate = new Date(obj)
-                    if (!isNaN(asDate.valueOf())) {
-                        parent[parentKey] = asDate
-                    }
+
+// Iterative version to avoid stack overflow on large datasets (50k+ deals)
+export function transformResponse(obj) {
+    var stack = [{obj: obj, parent: null, key: null}]
+
+    while (stack.length > 0) {
+        var item = stack.pop()
+        var val = item.obj
+
+        if (val == null || typeof val !== 'object') {
+            if (typeof val === 'string' && val.match(dateRegExp)) {
+                var asDate = new Date(val)
+                if (!isNaN(asDate.valueOf()) && item.parent && item.key != null) {
+                    item.parent[item.key] = asDate
                 }
-            } else if (typeof obj === 'object') {
-                // If the object represents a BigInt, convert it to a BigInt
-                if (obj.__typename === 'BigInt') {
-                    parent[parentKey] = BigInt(obj.n)
-                    return
-                }
-                transformResponse(obj[key], obj, key)
+            }
+            continue
+        }
+
+        // BigInt conversion
+        if (val.__typename === 'BigInt') {
+            if (item.parent && item.key != null) {
+                item.parent[item.key] = BigInt(val.n)
+            }
+            continue
+        }
+
+        for (var key in val) {
+            if (val.hasOwnProperty(key)) {
+                stack.push({obj: val[key], parent: val, key: key})
             }
         }
     }
+
     return obj
 }
