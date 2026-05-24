@@ -1,0 +1,51 @@
+{
+  "name": "boost",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@apollo/client": "^3.14.1",
+    "@testing-library/jest-dom": "^5.17.0",
+    "@testing-library/react": "^11.1.0",
+    "@testing-library/user-event": "^12.1.10",
+    "bootstrap-icons": "^1.13.1",
+    "graphql": "^15.10.2",
+    "graphql-ws": "^5.16.2",
+    "jquery": "^3.7.1",
+    "moment": "^2.30.1",
+    "react": "^17.0.2",
+    "react-debounce-input": "^3.3.0",
+    "react-dom": "^17.0.2",
+    "react-google-charts": "^5.2.1",
+    "react-router-dom": "^6.2.1",
+    "web-vitals": "^1.0.1"
+  },
+  "scripts": {
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deps:outdated": "npm outdated",
+    "deps:update": "npm update --omit=peer"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^7.3.3"
+  }
+}

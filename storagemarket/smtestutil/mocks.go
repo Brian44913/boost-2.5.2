@@ -1,0 +1,443 @@
+package smtestutil
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+
+	"github.com/golang/mock/gomock"
+	"github.com/google/uuid"
+	"github.com/ipfs/go-cid"
+	"github.com/ipld/go-car/v2"
+
+	"github.com/filecoin-project/go-address"
+	"github.com/filecoin-project/go-state-types/abi"
+	"github.com/filecoin-project/go-state-types/builtin/v9/market"
+
+	pdtypes "github.com/filecoin-project/boost/piecedirectory/types"
+	mock_piecedirectory "github.com/filecoin-project/boost/piecedirectory/types/mocks"
+	mock_sealingpipeline "github.com/filecoin-project/boost/storagemarket/sealingpipeline/mock"
+	"github.com/filecoin-project/boost/storagemarket/types"
+	"github.com/filecoin-project/boost/storagemarket/types/mock_types"
+	"github.com/filecoin-project/boost/testutil"
+
+	lapi "github.com/filecoin-project/lotus/api"
+	sealing "github.com/filecoin-project/lotus/storage/pipeline"
+	"github.com/filecoin-project/lotus/storage/pipeline/piece"
+)
+
+type MinerStub struct {
+	*mock_types.MockDealPublisher
+	*mock_types.MockChainDealManager
+	*mock_types.MockPieceAdder
+	*mock_types.MockCommpCalculator
+	*mock_types.MockIndexProvider
+	*mock_piecedirectory.MockPieceReader
+	*mock_sealingpipeline.MockAPI
+
+	lk                    sync.Mutex
+	unblockCommp          map[uuid.UUID]chan struct{}
+	unblockPublish        map[uuid.UUID]chan struct{}
+	unblockWaitForPublish map[uuid.UUID]chan struct{}
+	unblockAddPiece       map[uuid.UUID]chan struct{}
+	unblockAnnounce       map[uuid.UUID]chan struct{}
+}
+
+func NewMinerStub(ctrl *gomock.Controller) *MinerStub {
+	return &MinerStub{
+		MockCommpCalculator:  mock_types.NewMockCommpCalculator(ctrl),
+		MockDealPublisher:    mock_types.NewMockDealPublisher(ctrl),
+		MockChainDealManager: mock_types.NewMockChainDealManager(ctrl),
+		MockPieceAdder:       mock_types.NewMockPieceAdder(ctrl),
+		MockIndexProvider:    mock_types.NewMockIndexProvider(ctrl),
+		MockPieceReader:      mock_piecedirectory.NewMockPieceReader(ctrl),
+		MockAPI:              mock_sealingpipeline.NewMockAPI(ctrl),
+
+		unblockCommp:          make(map[uuid.UUID]chan struct{}),
+		unblockPublish:        make(map[uuid.UUID]chan struct{}),
+		unblockWaitForPublish: make(map[uuid.UUID]chan struct{}),
+		unblockAddPiece:       make(map[uuid.UUID]chan struct{}),
+		unblockAnnounce:       make(map[uuid.UUID]chan struct{}),
+	}
+}
+
+func (ms *MinerStub) UnblockCommp(id uuid.UUID) {
+	ms.lk.Lock()
+	ch := ms.unblockCommp[id]
+	ms.lk.Unlock()
+	close(ch)
+}
+
+func (ms *MinerStub) UnblockPublish(id uuid.UUID) {
+	ms.lk.Lock()
+	ch := ms.unblockPublish[id]
+	ms.lk.Unlock()
+	close(ch)
+}
+
+func (ms *MinerStub) UnblockWaitForPublish(id uuid.UUID) {
+	ms.lk.Lock()
+	ch := ms.unblockWaitForPublish[id]
+	ms.lk.Unlock()
+	close(ch)
+}
+func (ms *MinerStub) UnblockAddPiece(id uuid.UUID) {
+	ms.lk.Lock()
+	ch := ms.unblockAddPiece[id]
+	ms.lk.Unlock()
+	close(ch)
+}
+
+func (ms *MinerStub) ForDeal(dp *types.DealParams, publishCid, finalPublishCid cid.Cid, dealId, sectorsStatusDealId abi.DealID, sectorId abi.SectorNumber, offset abi.PaddedPieceSize, carFilePath string) *MinerStubBuilder {
+	return &MinerStubBuilder{
+		stub: ms,
+		dp:   dp,
+
+		publishCid:          publishCid,
+		finalPublishCid:     finalPublishCid,
+		dealId:              dealId,
+		sectorsStatusDealId: sectorsStatusDealId,
+		sectorId:            sectorId,
+		offset:              offset,
+		carFilePath:         carFilePath,
+	}
+}
+
+type MinerStubBuilder struct {
+	stub       *MinerStub
+	dp         *types.DealParams
+	publishCid cid.Cid
+
+	finalPublishCid     cid.Cid
+	dealId              abi.DealID
+	sectorsStatusDealId abi.DealID
+
+	sectorId    abi.SectorNumber
+	offset      abi.PaddedPieceSize
+	carFilePath string
+	rb          *[]byte
+}
+
+func (mb *MinerStubBuilder) SetupNoOp() *MinerStubBuilder {
+	mb.stub.MockCommpCalculator.EXPECT().ComputeDataCid(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any()).DoAndReturn(func(_ context.Context, _ abi.UnpaddedPieceSize, r io.Reader) (abi.PieceInfo, error) {
+		return abi.PieceInfo{
+			Size:     mb.dp.ClientDealProposal.Proposal.PieceSize,
+			PieceCID: mb.dp.ClientDealProposal.Proposal.PieceCID,
+		}, nil
+	}).AnyTimes()
+
+	mb.stub.MockDealPublisher.EXPECT().Publish(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal)).DoAndReturn(func(_ context.Context, _ market.ClientDealProposal) (cid.Cid, error) {
+		return mb.publishCid, nil
+	}).AnyTimes()
+
+	mb.stub.MockChainDealManager.EXPECT().WaitForPublishDeals(gomock.Any(), gomock.Eq(mb.publishCid), gomock.Eq(mb.dp.ClientDealProposal.Proposal)).DoAndReturn(func(_ context.Context, _ cid.Cid, _ market.DealProposal) (*types.PublishDealsWaitResult, error) {
+		return &types.PublishDealsWaitResult{
+			DealID:   mb.dealId,
+			FinalCid: mb.finalPublishCid,
+		}, nil
+	}).AnyTimes()
+
+	mb.stub.MockPieceAdder.EXPECT().SectorAddPieceToAny(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, _ abi.UnpaddedPieceSize, r io.Reader, _ piece.PieceDealInfo) (abi.SectorNumber, abi.PaddedPieceSize, error) {
+		return mb.sectorId, mb.offset, nil
+	}).AnyTimes()
+
+	mb.stub.MockIndexProvider.EXPECT().Enabled().Return(true).AnyTimes()
+	mb.stub.MockIndexProvider.EXPECT().Start(gomock.Any()).AnyTimes()
+	mb.stub.MockIndexProvider.EXPECT().AnnounceBoostDeal(gomock.Any(), gomock.Any()).Return(testutil.GenerateCid(), nil).AnyTimes()
+	secInfo := lapi.SectorInfo{
+		State: lapi.SectorState(sealing.Proving),
+		Deals: []abi.DealID{mb.sectorsStatusDealId},
+	}
+	mb.stub.MockAPI.EXPECT().SectorsStatus(gomock.Any(), gomock.Any(), false).Return(secInfo, nil).AnyTimes()
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupCommp(blocking bool, optional bool) *MinerStubBuilder {
+	mb.stub.lk.Lock()
+	if blocking {
+		mb.stub.unblockCommp[mb.dp.DealUUID] = make(chan struct{})
+	}
+	mb.stub.lk.Unlock()
+
+	exp := mb.stub.MockCommpCalculator.EXPECT().ComputeDataCid(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any()).DoAndReturn(func(ctx context.Context, _ abi.UnpaddedPieceSize, r io.Reader) (abi.PieceInfo, error) {
+		mb.stub.lk.Lock()
+		ch := mb.stub.unblockCommp[mb.dp.DealUUID]
+		mb.stub.lk.Unlock()
+		if ch != nil {
+			select {
+			case <-ctx.Done():
+				return abi.PieceInfo{}, ctx.Err()
+			case <-ch:
+			}
+		}
+		if ctx.Err() != nil {
+			return abi.PieceInfo{}, ctx.Err()
+		}
+
+		return abi.PieceInfo{
+			Size:     mb.dp.ClientDealProposal.Proposal.PieceSize,
+			PieceCID: mb.dp.ClientDealProposal.Proposal.PieceCID,
+		}, nil
+	})
+	if optional {
+		exp.AnyTimes()
+	}
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupCommpFailure(err error) {
+	mb.stub.MockCommpCalculator.EXPECT().ComputeDataCid(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any()).DoAndReturn(func(_ context.Context, _ abi.UnpaddedPieceSize, r io.Reader) (abi.PieceInfo, error) {
+		if strings.HasPrefix(err.Error(), "panic: ") {
+			panic(err.Error()[len("panic: "):])
+		}
+		return abi.PieceInfo{}, err
+	})
+}
+
+func (mb *MinerStubBuilder) SetupPublish(blocking bool) *MinerStubBuilder {
+	mb.stub.lk.Lock()
+	if blocking {
+		mb.stub.unblockPublish[mb.dp.DealUUID] = make(chan struct{})
+	}
+	mb.stub.lk.Unlock()
+
+	mb.stub.MockDealPublisher.EXPECT().Publish(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal)).DoAndReturn(func(ctx context.Context, _ market.ClientDealProposal) (cid.Cid, error) {
+		mb.stub.lk.Lock()
+		ch := mb.stub.unblockPublish[mb.dp.DealUUID]
+		mb.stub.lk.Unlock()
+		if ch != nil {
+			select {
+			case <-ctx.Done():
+				return cid.Undef, ctx.Err()
+			case <-ch:
+			}
+
+		}
+		if ctx.Err() != nil {
+			return cid.Undef, ctx.Err()
+		}
+
+		return mb.publishCid, nil
+	})
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupPublishFailure(err error) *MinerStubBuilder {
+	mb.stub.MockDealPublisher.EXPECT().Publish(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal)).DoAndReturn(func(_ context.Context, _ market.ClientDealProposal) (cid.Cid, error) {
+		return cid.Undef, err
+	})
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupPublishConfirm(blocking bool) *MinerStubBuilder {
+	mb.stub.lk.Lock()
+	if blocking {
+		mb.stub.unblockWaitForPublish[mb.dp.DealUUID] = make(chan struct{})
+	}
+	mb.stub.lk.Unlock()
+
+	mb.stub.MockChainDealManager.EXPECT().WaitForPublishDeals(gomock.Any(), gomock.Eq(mb.publishCid), gomock.Eq(mb.dp.ClientDealProposal.Proposal)).DoAndReturn(func(ctx context.Context, _ cid.Cid, _ market.DealProposal) (*types.PublishDealsWaitResult, error) {
+		mb.stub.lk.Lock()
+		ch := mb.stub.unblockWaitForPublish[mb.dp.DealUUID]
+		mb.stub.lk.Unlock()
+		if ch != nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ch:
+			}
+
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		return &types.PublishDealsWaitResult{
+			DealID:   mb.dealId,
+			FinalCid: mb.finalPublishCid,
+		}, nil
+	})
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupPublishConfirmFailure(err error) *MinerStubBuilder {
+	mb.stub.MockChainDealManager.EXPECT().WaitForPublishDeals(gomock.Any(), gomock.Eq(mb.publishCid), gomock.Eq(mb.dp.ClientDealProposal.Proposal)).DoAndReturn(func(_ context.Context, _ cid.Cid, _ market.DealProposal) (*types.PublishDealsWaitResult, error) {
+		return nil, err
+	})
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupAddPiece(blocking bool) *MinerStubBuilder {
+	mb.stub.lk.Lock()
+	if blocking {
+		mb.stub.unblockAddPiece[mb.dp.DealUUID] = make(chan struct{})
+	}
+	mb.stub.lk.Unlock()
+
+	sdInfo := piece.PieceDealInfo{
+		DealID:       mb.dealId,
+		DealProposal: &mb.dp.ClientDealProposal.Proposal,
+		PublishCid:   &mb.finalPublishCid,
+		DealSchedule: piece.DealSchedule{
+			StartEpoch: mb.dp.ClientDealProposal.Proposal.StartEpoch,
+			EndEpoch:   mb.dp.ClientDealProposal.Proposal.EndEpoch,
+		},
+		KeepUnsealed: !mb.dp.RemoveUnsealedCopy,
+	}
+
+	var readBytes []byte
+	mb.stub.MockPieceAdder.EXPECT().SectorAddPieceToAny(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any(), gomock.Eq(sdInfo)).DoAndReturn(func(ctx context.Context, _ abi.UnpaddedPieceSize, r io.Reader, _ piece.PieceDealInfo) (lapi.SectorOffset, error) {
+		mb.stub.lk.Lock()
+		ch := mb.stub.unblockAddPiece[mb.dp.DealUUID]
+		mb.stub.lk.Unlock()
+		if ch != nil {
+			select {
+			case <-ctx.Done():
+				return lapi.SectorOffset{Sector: abi.SectorNumber(0), Offset: abi.PaddedPieceSize(0)}, ctx.Err()
+			case <-ch:
+			}
+
+		}
+		if ctx.Err() != nil {
+			return lapi.SectorOffset{Sector: abi.SectorNumber(0), Offset: abi.PaddedPieceSize(0)}, ctx.Err()
+		}
+
+		var err error
+		readBytes, err = io.ReadAll(r)
+		return lapi.SectorOffset{Sector: mb.sectorId, Offset: mb.offset}, err
+	})
+
+	mb.rb = &readBytes
+	return mb
+}
+
+func (mb *MinerStubBuilder) SetupAddPieceFailure(err error) {
+	sdInfo := piece.PieceDealInfo{
+		DealID:       mb.dealId,
+		DealProposal: &mb.dp.ClientDealProposal.Proposal,
+		PublishCid:   &mb.finalPublishCid,
+		DealSchedule: piece.DealSchedule{
+			StartEpoch: mb.dp.ClientDealProposal.Proposal.StartEpoch,
+			EndEpoch:   mb.dp.ClientDealProposal.Proposal.EndEpoch,
+		},
+		KeepUnsealed: !mb.dp.RemoveUnsealedCopy,
+	}
+
+	mb.stub.MockPieceAdder.EXPECT().SectorAddPieceToAny(gomock.Any(), gomock.Eq(mb.dp.ClientDealProposal.Proposal.PieceSize.Unpadded()), gomock.Any(), gomock.Eq(sdInfo)).DoAndReturn(func(_ context.Context, _ abi.UnpaddedPieceSize, r io.Reader, _ piece.PieceDealInfo) (lapi.SectorOffset, error) {
+		return lapi.SectorOffset{Sector: abi.SectorNumber(0), Offset: abi.PaddedPieceSize(0)}, err
+	})
+}
+
+func (mb *MinerStubBuilder) SetupAnnounce(blocking bool, announce bool) *MinerStubBuilder {
+	mb.stub.lk.Lock()
+	if blocking {
+		mb.stub.unblockAnnounce[mb.dp.DealUUID] = make(chan struct{})
+	}
+	mb.stub.lk.Unlock()
+
+	var callCount int
+	if announce {
+		callCount = 1
+	}
+
+	// When boost finishes adding the piece to a sector, it creates an index
+	// of the piece data and then announces the index. We need to mock a piece
+	// reader that returns the CAR file.
+	getReader := func(_ context.Context, _ address.Address, _ abi.SectorNumber, _ abi.PaddedPieceSize, _ abi.PaddedPieceSize) (pdtypes.SectionReader, error) {
+		readerWithClose, err := toPieceDirSectionReader(mb.carFilePath)
+		if err != nil {
+			panic(fmt.Sprintf("creating piece dir section reader: %s", err))
+		}
+		return readerWithClose, nil
+	}
+	mb.stub.MockPieceReader.EXPECT().GetReader(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes().DoAndReturn(getReader)
+
+	mb.stub.MockIndexProvider.EXPECT().Enabled().AnyTimes().Return(true)
+	mb.stub.MockIndexProvider.EXPECT().Start(gomock.Any()).AnyTimes()
+	mb.stub.MockIndexProvider.EXPECT().AnnounceBoostDeal(gomock.Any(), gomock.Any()).Times(callCount).DoAndReturn(func(ctx context.Context, _ *types.ProviderDealState) (cid.Cid, error) {
+		mb.stub.lk.Lock()
+		ch := mb.stub.unblockAddPiece[mb.dp.DealUUID]
+		mb.stub.lk.Unlock()
+		if ch != nil {
+			select {
+			case <-ctx.Done():
+				return cid.Undef, ctx.Err()
+			case <-ch:
+			}
+
+		}
+		if ctx.Err() != nil {
+			return cid.Undef, ctx.Err()
+		}
+
+		return testutil.GenerateCid(), nil
+	})
+
+	// Note: The sealing state checks happen after the announce stage has
+	// completed. So we would only expect to get calls to SectorsStatus
+	// after announce.
+	secInfo := lapi.SectorInfo{
+		State: lapi.SectorState(sealing.Proving),
+		Deals: []abi.DealID{mb.sectorsStatusDealId},
+	}
+	mb.stub.MockAPI.EXPECT().SectorsStatus(gomock.Any(), gomock.Any(), false).Return(secInfo, nil).AnyTimes()
+
+	return mb
+}
+
+func (mb *MinerStubBuilder) Output() *StubbedMinerOutput {
+	return &StubbedMinerOutput{
+		PublishCid:          mb.publishCid,
+		FinalPublishCid:     mb.finalPublishCid,
+		DealID:              mb.dealId,
+		SectorsStatusDealID: mb.sectorsStatusDealId,
+		SealedBytes:         mb.rb,
+		SectorID:            mb.sectorId,
+		Offset:              mb.offset,
+		CarFilePath:         mb.carFilePath,
+	}
+}
+
+type StubbedMinerOutput struct {
+	PublishCid          cid.Cid
+	FinalPublishCid     cid.Cid
+	DealID              abi.DealID
+	SectorsStatusDealID abi.DealID
+	SealedBytes         *[]byte
+	SectorID            abi.SectorNumber
+	Offset              abi.PaddedPieceSize
+	CarFilePath         string
+}
+
+func toPieceDirSectionReader(carFilePath string) (pdtypes.SectionReader, error) {
+	carReader, err := car.OpenReader(carFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("opening car file %s: %w", carFilePath, err)
+	}
+	carv1Reader, err := carReader.DataReader()
+	if err != nil {
+		return nil, fmt.Errorf("opening car v1 reader %s: %s", carFilePath, err)
+	}
+	bz, err := io.ReadAll(carv1Reader)
+	if err != nil {
+		return nil, fmt.Errorf("reader car v1 reader %s: %s", carFilePath, err)
+	}
+	return &sectionReaderWithClose{Reader: bytes.NewReader(bz)}, nil
+}
+
+type sectionReaderWithClose struct {
+	*bytes.Reader
+}
+
+func (s *sectionReaderWithClose) Close() error {
+	return nil
+}

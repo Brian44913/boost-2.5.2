@@ -1,0 +1,9 @@
+name: install-go
+description: install-go
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
