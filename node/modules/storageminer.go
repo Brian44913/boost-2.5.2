@@ -479,6 +479,7 @@ func NewStorageMarketProvider(provAddr address.Address, cfg *config.Boost) func(
 		prvCfg := storagemarket.Config{
 			MaxTransferDuration: time.Duration(cfg.Dealmaking.MaxTransferDuration),
 			RemoteCommp:         cfg.Dealmaking.RemoteCommp,
+			SkipCommPVerify:     cfg.Dealmaking.SkipCommPVerify,
 			TransferLimiter: storagemarket.TransferLimiterConfig{
 				MaxConcurrent:    cfg.HttpDownload.HttpTransferMaxConcurrentDownloads,
 				StallCheckPeriod: time.Duration(cfg.HttpDownload.HttpTransferStallCheckPeriod),

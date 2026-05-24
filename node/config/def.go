@@ -113,6 +113,7 @@ func DefaultBoost() *Boost {
 			IsUnsealedCacheExpiry:           Duration(5 * time.Minute),
 			MaxTransferDuration:             Duration(24 * 3600 * time.Second),
 			RemoteCommp:                     false,
+			SkipCommPVerify:                 true,
 			MaxConcurrentLocalCommp:         1,
 			DealLogDurationDays:             30,
 			SealingPipelineCacheTimeout:     Duration(30 * time.Second),

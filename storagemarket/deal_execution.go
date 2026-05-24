@@ -178,11 +178,15 @@ func (p *Provider) execDealUptoAddPiece(ctx context.Context, deal *types.Provide
 		p.dealLogger.Infow(deal.DealUuid, "deal data-transfer can no longer be cancelled")
 	} else if deal.Checkpoint < dealcheckpoints.Transferred {
 		// verify CommP matches for an offline deal
-		if err := p.verifyCommP(deal); err != nil {
-			err.error = fmt.Errorf("error when matching commP for imported data for offline deal: %w", err)
-			return err
+		if p.config.SkipCommPVerify {
+			p.dealLogger.Infow(deal.DealUuid, "skipped CommP verification for offline deal")
+		} else {
+			if err := p.verifyCommP(deal); err != nil {
+				err.error = fmt.Errorf("error when matching commP for imported data for offline deal: %w", err)
+				return err
+			}
+			p.dealLogger.Infow(deal.DealUuid, "commp matched successfully for imported data for offline deal")
 		}
-		p.dealLogger.Infow(deal.DealUuid, "commp matched successfully for imported data for offline deal")
 
 		// update checkpoint
 		if derr := p.updateCheckpoint(pub, deal, dealcheckpoints.Transferred); derr != nil {
@@ -371,12 +375,15 @@ func (p *Provider) transferAndVerify(dh *dealHandler, pub event.Emitter, deal *t
 		time.Since(st).String())
 
 	// Verify CommP matches
-	if err := p.verifyCommP(deal); err != nil {
-		err.error = fmt.Errorf("failed to verify CommP: %w", err.error)
-		return err
+	if p.config.SkipCommPVerify {
+		p.dealLogger.Infow(deal.DealUuid, "skipped CommP verification for deal-data")
+	} else {
+		if err := p.verifyCommP(deal); err != nil {
+			err.error = fmt.Errorf("failed to verify CommP: %w", err.error)
+			return err
+		}
+		p.dealLogger.Infow(deal.DealUuid, "commP matched successfully: deal-data verified")
 	}
-
-	p.dealLogger.Infow(deal.DealUuid, "commP matched successfully: deal-data verified")
 	return p.updateCheckpoint(pub, deal, dealcheckpoints.Transferred)
 }
 

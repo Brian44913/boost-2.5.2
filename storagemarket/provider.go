@@ -78,7 +78,9 @@ type Config struct {
 	// The maximum amount of time a transfer can take before it fails
 	MaxTransferDuration time.Duration
 	// Whether to do commp on the Boost node (local) or the sealing node (remote)
-	RemoteCommp     bool
+	RemoteCommp bool
+	// Skip CommP verification for offline deals and direct deals
+	SkipCommPVerify bool
 	TransferLimiter TransferLimiterConfig
 	// Cleanup deal logs from DB older than this many number of days
 	DealLogDurationDays int

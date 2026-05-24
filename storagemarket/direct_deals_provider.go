@@ -43,6 +43,8 @@ import (
 type DDPConfig struct {
 	// Whether to do commp on the Boost node (local) or the sealing node (remote)
 	RemoteCommp bool
+	// Skip CommP verification for direct deals
+	SkipCommPVerify bool
 	// Minimum start epoch buffer to give time for sealing of sector with deal
 	StartEpochSealingBuffer abi.ChainEpoch
 	Curio                   bool
@@ -357,32 +359,43 @@ func (ddp *DirectDealsProvider) execDeal(ctx context.Context, entry *types.Direc
 		}
 
 		ddp.dealLogger.Infow(dealUuid, "size of deal", "filepath", entry.InboundFilePath, "size", fstat.Size())
-		ddp.dealLogger.Infow(dealUuid, "generating commp")
-
-		// TODO: should we be passing pieceSize here ??!?
-		pieceSize := abi.UnpaddedPieceSize(fstat.Size())
-
-		generatedPieceInfo, dmErr := generatePieceCommitment(ctx, ddp.commpCalc, ddp.commpThrottle, entry.InboundFilePath, pieceSize.Padded(), ddp.config.RemoteCommp)
-		if dmErr != nil {
-			return &dealMakingError{
-				retry: types.DealRetryManual,
-				error: fmt.Errorf("failed to generate commp: %w", dmErr),
-			}
-		}
 
 		entry.InboundFileSize = fstat.Size()
 
-		log.Infow("direct deal details", "filepath", entry.InboundFilePath, "supplied-piececid", entry.PieceCID, "calculated-piececid", generatedPieceInfo.PieceCID, "calculated-piecesize", generatedPieceInfo.Size, "os stat size", fstat.Size())
-
-		if !entry.PieceCID.Equals(generatedPieceInfo.PieceCID) {
-			return &dealMakingError{
-				retry: types.DealRetryManual,
-				error: fmt.Errorf("commP expected=%s, actual=%s: %w", entry.PieceCID, generatedPieceInfo.PieceCID, ErrCommpMismatch),
+		if ddp.config.SkipCommPVerify {
+			ddp.dealLogger.Infow(dealUuid, "skipped CommP verification for direct deal")
+			// 计算最小的 power-of-2 PaddedPieceSize，其 Unpadded 能容纳文件大小
+			paddedSize := abi.PaddedPieceSize(128)
+			for paddedSize.Unpadded() < abi.UnpaddedPieceSize(fstat.Size()) {
+				paddedSize <<= 1
 			}
-		}
-		ddp.dealLogger.Infow(dealUuid, "completed generating commp")
+			entry.PieceSize = paddedSize
+		} else {
+			ddp.dealLogger.Infow(dealUuid, "generating commp")
 
-		entry.PieceSize = generatedPieceInfo.Size
+			// TODO: should we be passing pieceSize here ??!?
+			pieceSize := abi.UnpaddedPieceSize(fstat.Size())
+
+			generatedPieceInfo, dmErr := generatePieceCommitment(ctx, ddp.commpCalc, ddp.commpThrottle, entry.InboundFilePath, pieceSize.Padded(), ddp.config.RemoteCommp)
+			if dmErr != nil {
+				return &dealMakingError{
+					retry: types.DealRetryManual,
+					error: fmt.Errorf("failed to generate commp: %w", dmErr),
+				}
+			}
+
+			log.Infow("direct deal details", "filepath", entry.InboundFilePath, "supplied-piececid", entry.PieceCID, "calculated-piececid", generatedPieceInfo.PieceCID, "calculated-piecesize", generatedPieceInfo.Size, "os stat size", fstat.Size())
+
+			if !entry.PieceCID.Equals(generatedPieceInfo.PieceCID) {
+				return &dealMakingError{
+					retry: types.DealRetryManual,
+					error: fmt.Errorf("commP expected=%s, actual=%s: %w", entry.PieceCID, generatedPieceInfo.PieceCID, ErrCommpMismatch),
+				}
+			}
+			ddp.dealLogger.Infow(dealUuid, "completed generating commp")
+
+			entry.PieceSize = generatedPieceInfo.Size
+		}
 
 		if err := ddp.updateCheckpoint(ctx, entry, dealcheckpoints.Transferred); err != nil {
 			return err

@@ -142,6 +142,9 @@ type DealmakingConfig struct {
 	// Whether to do commp on the Boost node (local) or on the Sealer (remote)
 	// Please note that this only works for v1.2.0 deals and not legacy deals
 	RemoteCommp bool
+	// Skip CommP verification for offline deals and direct deals import
+	// 跳过离线订单和DDO导入的CommP校验，加速导入
+	SkipCommPVerify bool
 	// The maximum number of commp processes to run in parallel on the local
 	// boost process
 	MaxConcurrentLocalCommp uint64
