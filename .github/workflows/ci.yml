@@ -1,12 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - '**'
+  workflow_dispatch:   # manual trigger only - auto-CI disabled per personal policy (Brian44913 fork)
+  # push:              # disabled to skip auto-CI on every commit
+  #   branches:
+  #     - main
+  # pull_request:
+  #   branches:
+  #     - '**'
 
 env:
   FFI_USE_OPENCL: 1

@@ -1,10 +1,11 @@
 name: Label syncer
 on:
-  push:
-    paths:
-      - '.github/labels.yml'
-    branches:
-      - main
+  workflow_dispatch:   # manual trigger only - auto-CI disabled per personal policy (Brian44913 fork)
+  # push:
+  #   paths:
+  #     - '.github/labels.yml'
+  #   branches:
+  #     - main
 jobs:
   build:
     name: Sync labels

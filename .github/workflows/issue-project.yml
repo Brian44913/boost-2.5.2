@@ -1,7 +1,8 @@
 name: Add Issue to project
 on:
-  issues:
-    types: [opened]
+  workflow_dispatch:   # manual trigger only - upstream-only secret BOOST_BOARD unavailable on Brian44913 fork
+  # issues:
+  #   types: [opened]
 
 jobs:
   track_issue:
