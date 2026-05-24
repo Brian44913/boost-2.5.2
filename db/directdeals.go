@@ -163,7 +163,7 @@ func (d *DirectDealsDB) List(ctx context.Context, query string, filter *FilterOp
 
 	// Add pagination parameters
 	if cursor != nil {
-		where += "CreatedAt <= (SELECT CreatedAt FROM Deals WHERE ID = ?)"
+		where += "CreatedAt <= (SELECT CreatedAt FROM DirectDeals WHERE ID = ?)"
 		whereArgs = append(whereArgs, *cursor)
 	}
 
